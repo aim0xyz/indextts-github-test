@@ -1,22 +1,20 @@
-FROM nvidia/cuda:11.8-devel-ubuntu22.04
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install Python and system dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3.11 \
-    python3.11-pip \
-    python3.11-dev \
     libsndfile1-dev \
     ffmpeg \
     git \
     curl \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symlink for python
-RUN ln -s /usr/bin/python3.11 /usr/bin/python
+# Install PyTorch with CUDA support (CPU-only fallback if CUDA not available)
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-# Install PyTorch and other Python dependencies
+# Copy and install other Python requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

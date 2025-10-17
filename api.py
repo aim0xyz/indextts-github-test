@@ -48,6 +48,8 @@ PRESETS = {
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 logger.info(f"Using device: {device}")
+if device == "cpu":
+    logger.warning("CUDA not available - running on CPU. Performance will be significantly slower.")
 
 # Globals
 model = None
@@ -69,10 +71,13 @@ app = FastAPI(title="IndexTTS-2 Serverless Test API")
 @app.get("/")
 async def root():
     """Root endpoint for health checks"""
+    gpu_available = torch.cuda.is_available()
     return {
         "status": "running",
         "model": "indextts-v2",
         "device": device,
+        "gpu_available": gpu_available,
+        "gpu_count": torch.cuda.device_count() if gpu_available else 0,
         "model_loaded": model is not None
     }
 
@@ -100,7 +105,16 @@ async def startup():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "device": device, "storage": "ephemeral"}
+    gpu_available = torch.cuda.is_available()
+    gpu_count = torch.cuda.device_count() if gpu_available else 0
+    return {
+        "status": "healthy",
+        "device": device,
+        "gpu_available": gpu_available,
+        "gpu_count": gpu_count,
+        "storage": "ephemeral",
+        "model_loaded": model is not None
+    }
 
 def load_db():
     global in_memory_db
