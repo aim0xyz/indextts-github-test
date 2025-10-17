@@ -12,6 +12,10 @@ import librosa
 from pathlib import Path
 from index_tts import TTS as IndexTTS  # Assumes git install
 
+# New import for runtime HF download
+from huggingface_hub import snapshot_download
+import shutil
+
 # Logging
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -65,20 +69,63 @@ app = FastAPI(title="IndexTTS-2 Serverless Test API")
 @app.on_event("startup")
 async def startup():
     global model, in_memory_db
-    MODEL_DIR.mkdir(exist_ok=True)
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
     if VOICE_DB_PATH.exists():
         in_memory_db = json.loads(VOICE_DB_PATH.read_text())
     else:
         VOICE_DB_PATH.write_text(json.dumps(in_memory_db))
+
+    # If model not present in MODEL_DIR, try to download at runtime
+    if not any(MODEL_DIR.iterdir()):
+        hf_token = os.getenv("HF_TOKEN")
+        try:
+            logger.info("Model dir is empty — attempting runtime download from Hugging Face...")
+            # snapshot_download will download repo contents into local_dir
+            ret_path = snapshot_download(
+                repo_id="IndexTeam/IndexTTS-2",
+                local_dir=str(MODEL_DIR),
+                token=hf_token
+            )
+            logger.info(f"snapshot_download returned: {ret_path}")
+            # If snapshot_download created a nested folder, move contents up
+            try:
+                # If MODEL_DIR is empty but ret_path has files inside a nested subfolder, move them
+                if not any(MODEL_DIR.iterdir()):
+                    nested = Path(ret_path)
+                    if nested.exists() and nested.is_dir():
+                        for child in nested.iterdir():
+                            dest = MODEL_DIR / child.name
+                            if child.is_dir():
+                                shutil.copytree(child, dest, dirs_exist_ok=True)
+                            else:
+                                shutil.copy2(child, dest)
+                # Final check
+                if not any(MODEL_DIR.iterdir()):
+                    raise RuntimeError("snapshot_download completed but no files found in MODEL_DIR")
+            except Exception as e_move:
+                logger.warning(f"Post-download normalization warning: {e_move}")
+            logger.info("Download complete (or files placed into MODEL_DIR).")
+        except Exception as e:
+            logger.warning(f"Hugging Face download failed: {e}. Attempting to copy /app/indextts2_checkpoints if present.")
+            # Fallback: if you baked the model into the image at /app/indextts2_checkpoints, copy it
+            try:
+                src = Path("/app/indextts2_checkpoints")
+                if src.exists() and any(src.iterdir()):
+                    shutil.copytree(src, MODEL_DIR, dirs_exist_ok=True)
+                    logger.info("Copied model from /app/indextts2_checkpoints to runtime MODEL_DIR.")
+                else:
+                    raise FileNotFoundError("/app/indextts2_checkpoints not present or empty")
+            except Exception as e2:
+                logger.error(f"Failed to obtain model via HF download or /app copy: {e2}")
+                # Raise an HTTPException so RunPod shows a 503 and logs contain the reason
+                raise HTTPException(status_code=503, detail=f"Model load failed: {e2}")
+
+    # At this point MODEL_DIR should contain model files; load the model
     try:
-        # Copy bundled model from /app to temp (ephemeral but ready)
-        if not any(MODEL_DIR.iterdir()):
-            import shutil
-            shutil.copytree("/app/indextts2_checkpoints", MODEL_DIR, dirs_exist_ok=True)
         model = IndexTTS(model_dir=str(MODEL_DIR), device=device)
         logger.info("✅ Model loaded in ephemeral storage!")
     except Exception as e:
-        logger.error(f"Load failed: {e}")
+        logger.error(f"Load failed after download/copy: {e}")
         raise HTTPException(503, "Model load failed")
 
 @app.get("/health")
