@@ -11,10 +11,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install PyTorch with CUDA support (CPU-only fallback if CUDA not available)
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-
-# Copy and install other Python requirements
+# Copy and install Python requirements (including PyTorch)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
