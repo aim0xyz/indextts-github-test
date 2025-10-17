@@ -1,14 +1,16 @@
-FROM runpod/pytorch:2.0.1-py3.11-cuda11.8-devel
+FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8-devel
 
 WORKDIR /app
 
 # Install system dependencies first
 RUN apt-get update && apt-get install -y \
-    libsndfile1 \
+    libsndfile1-dev \
     ffmpeg \
+    git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python requirements
+# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
