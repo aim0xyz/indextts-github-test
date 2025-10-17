@@ -1,16 +1,22 @@
-FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8-devel
+FROM nvidia/cuda:11.8-devel-ubuntu22.04
 
 WORKDIR /app
 
-# Install system dependencies first
+# Install Python and system dependencies
 RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3.11-pip \
+    python3.11-dev \
     libsndfile1-dev \
     ffmpeg \
     git \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Create symlink for python
+RUN ln -s /usr/bin/python3.11 /usr/bin/python
+
+# Install PyTorch and other Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
