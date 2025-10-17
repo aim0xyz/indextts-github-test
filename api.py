@@ -66,6 +66,16 @@ class TTSRequest(BaseModel):
 
 app = FastAPI(title="IndexTTS-2 Serverless Test API")
 
+@app.get("/")
+async def root():
+    """Root endpoint for health checks"""
+    return {
+        "status": "running",
+        "model": "indextts-v2",
+        "device": device,
+        "model_loaded": model is not None
+    }
+
 @app.on_event("startup")
 async def startup():
     global model, in_memory_db
@@ -75,58 +85,18 @@ async def startup():
     else:
         VOICE_DB_PATH.write_text(json.dumps(in_memory_db))
 
-    # If model not present in MODEL_DIR, try to download at runtime
-    if not any(MODEL_DIR.iterdir()):
-        hf_token = os.getenv("HF_TOKEN")
-        try:
-            logger.info("Model dir is empty — attempting runtime download from Hugging Face...")
-            # snapshot_download will download repo contents into local_dir
-            ret_path = snapshot_download(
-                repo_id="IndexTeam/IndexTTS-2",
-                local_dir=str(MODEL_DIR),
-                token=hf_token
-            )
-            logger.info(f"snapshot_download returned: {ret_path}")
-            # If snapshot_download created a nested folder, move contents up
-            try:
-                # If MODEL_DIR is empty but ret_path has files inside a nested subfolder, move them
-                if not any(MODEL_DIR.iterdir()):
-                    nested = Path(ret_path)
-                    if nested.exists() and nested.is_dir():
-                        for child in nested.iterdir():
-                            dest = MODEL_DIR / child.name
-                            if child.is_dir():
-                                shutil.copytree(child, dest, dirs_exist_ok=True)
-                            else:
-                                shutil.copy2(child, dest)
-                # Final check
-                if not any(MODEL_DIR.iterdir()):
-                    raise RuntimeError("snapshot_download completed but no files found in MODEL_DIR")
-            except Exception as e_move:
-                logger.warning(f"Post-download normalization warning: {e_move}")
-            logger.info("Download complete (or files placed into MODEL_DIR).")
-        except Exception as e:
-            logger.warning(f"Hugging Face download failed: {e}. Attempting to copy /app/indextts2_checkpoints if present.")
-            # Fallback: if you baked the model into the image at /app/indextts2_checkpoints, copy it
-            try:
-                src = Path("/app/indextts2_checkpoints")
-                if src.exists() and any(src.iterdir()):
-                    shutil.copytree(src, MODEL_DIR, dirs_exist_ok=True)
-                    logger.info("Copied model from /app/indextts2_checkpoints to runtime MODEL_DIR.")
-                else:
-                    raise FileNotFoundError("/app/indextts2_checkpoints not present or empty")
-            except Exception as e2:
-                logger.error(f"Failed to obtain model via HF download or /app copy: {e2}")
-                # Raise an HTTPException so RunPod shows a 503 and logs contain the reason
-                raise HTTPException(status_code=503, detail=f"Model load failed: {e2}")
+    # Try to ensure model is available
+    model_available = await ensure_model_available()
+    if not model_available:
+        logger.warning("Model not available during startup - will load on-demand")
 
-    # At this point MODEL_DIR should contain model files; load the model
+    # Try to load the model (don't fail if it doesn't work initially)
     try:
-        model = IndexTTS(model_dir=str(MODEL_DIR), device=device)
-        logger.info("✅ Model loaded in ephemeral storage!")
+        await load_model()
     except Exception as e:
-        logger.error(f"Load failed after download/copy: {e}")
-        raise HTTPException(503, "Model load failed")
+        logger.warning(f"Initial model load failed: {e}. Model will be loaded on-demand.")
+        # Don't raise an exception - let the API start without the model
+        # The /run endpoint will try to load it when needed
 
 @app.get("/health")
 async def health():
@@ -216,6 +186,211 @@ async def tts(request: TTSRequest):
     except Exception as e:
         logger.error(f"TTS error: {e}")
         raise HTTPException(500, str(e))
+
+class RunPodRequest(BaseModel):
+    input: dict
+
+@app.post("/run")
+async def run_job(request: RunPodRequest):
+    """RunPod serverless job endpoint"""
+    try:
+        job_input = request.input
+
+        # Handle voice cloning requests
+        if "audio_data" in job_input and "voice_name" in job_input:
+            return await handle_voice_cloning(job_input)
+        # Handle TTS requests
+        elif "text" in job_input:
+            return await handle_tts_request(job_input)
+        else:
+            raise HTTPException(400, "Invalid job input format")
+
+    except Exception as e:
+        logger.error(f"Run job error: {e}")
+        raise HTTPException(500, str(e))
+
+async def handle_voice_cloning(job_input: dict):
+    """Handle voice cloning requests from /run endpoint"""
+    try:
+        # Extract parameters
+        audio_data_b64 = job_input.get("audio_data")
+        voice_name = job_input.get("voice_name", "unknown")
+        user_id = job_input.get("user_id", "anonymous")
+        language = job_input.get("language", "en")
+
+        if not audio_data_b64:
+            raise HTTPException(400, "audio_data is required")
+
+        # Decode audio data
+        audio_bytes = base64.b64decode(audio_data_b64)
+
+        # Save audio file
+        voice_path = VOICES_DIR / f"{user_id}.wav"
+        voice_path.write_bytes(audio_bytes)
+
+        # Load and process audio
+        audio, sr = librosa.load(io.BytesIO(audio_bytes), sr=22050)
+
+        if model is None:
+            # Try to load model if not already loaded
+            await load_model()
+
+        if model is None:
+            raise HTTPException(503, "Model not available")
+
+        # Generate embedding
+        embedding = model.clone_voice(audio, sr, language=language)
+
+        # Save to database
+        db = load_db()
+        db["voices"][user_id] = {
+            "language": language,
+            "file_path": str(voice_path.relative_to(TEMP_DIR)),
+            "embedding": embedding.tolist(),
+            "created": datetime.now().isoformat()
+        }
+        save_db(db)
+
+        logger.info(f"Voice cloned for user {user_id}")
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "voice_id": user_id,
+            "message": f"Voice '{voice_name}' cloned successfully"
+        }
+
+    except Exception as e:
+        logger.error(f"Voice cloning error: {e}")
+        raise HTTPException(500, str(e))
+
+async def handle_tts_request(job_input: dict):
+    """Handle TTS requests from /run endpoint"""
+    try:
+        # Extract parameters
+        text = job_input.get("text")
+        user_id = job_input.get("user_id")
+        preset = job_input.get("preset")
+        language = job_input.get("language", "en")
+        emotion = job_input.get("emotion", "neutral")
+
+        if not text:
+            raise HTTPException(400, "text is required")
+
+        if model is None:
+            # Try to load model if not already loaded
+            await load_model()
+
+        if model is None:
+            raise HTTPException(503, "Model not available")
+
+        # Get embedding
+        emb_list = get_embedding(user_id, preset, language)
+        if not emb_list:
+            raise HTTPException(400, f"Need user_id or preset for voice synthesis")
+
+        emb = torch.tensor(emb_list).unsqueeze(0).to(device)
+
+        # Check cache
+        cache_key = hashlib.md5(f"{text}:{user_id or preset}:{language}".encode()).hexdigest()
+        cache_path = CACHE_DIR / f"{cache_key}.wav"
+
+        if cache_path.exists():
+            with open(cache_path, "rb") as f:
+                audio_data = f.read()
+        else:
+            # Generate audio
+            audio = model.synthesize(text=text, speaker_embedding=emb, language=language, emotion=emotion)
+
+            # Convert to WAV
+            buffer = io.BytesIO()
+            sf.write(buffer, audio.cpu().numpy().squeeze(), 22050, format='WAV')
+            audio_data = buffer.getvalue()
+
+            # Cache the result
+            with open(cache_path, "wb") as f:
+                f.write(audio_data)
+
+        # Return base64 encoded audio
+        audio_b64 = base64.b64encode(audio_data).decode()
+        return {
+            "audio": audio_b64,
+            "format": "base64_wav"
+        }
+
+    except Exception as e:
+        logger.error(f"TTS request error: {e}")
+        raise HTTPException(500, str(e))
+
+async def ensure_model_available():
+    """Ensure the IndexTTS model files are available"""
+    global model
+
+    # Check if model directory has files
+    if any(MODEL_DIR.iterdir()):
+        logger.info("Model files already present in MODEL_DIR")
+        return True
+
+    # Try to download from HuggingFace
+    hf_token = os.getenv("HF_TOKEN")
+    if hf_token:
+        try:
+            logger.info("Downloading IndexTTS model from HuggingFace...")
+            ret_path = snapshot_download(
+                repo_id="IndexTeam/IndexTTS-2",
+                local_dir=str(MODEL_DIR),
+                token=hf_token,
+                local_files_only=False
+            )
+            logger.info(f"Model downloaded to: {ret_path}")
+
+            # If snapshot_download created a nested folder, move contents up
+            if not any(MODEL_DIR.iterdir()):
+                nested = Path(ret_path)
+                if nested.exists() and nested.is_dir():
+                    for child in nested.iterdir():
+                        dest = MODEL_DIR / child.name
+                        if child.is_dir():
+                            shutil.copytree(child, dest, dirs_exist_ok=True)
+                        else:
+                            shutil.copy2(child, dest)
+
+            if any(MODEL_DIR.iterdir()):
+                logger.info("✅ Model files successfully downloaded")
+                return True
+            else:
+                logger.error("❌ Model download completed but no files found")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ HuggingFace download failed: {e}")
+
+    # Try to copy from baked-in location
+    try:
+        src = Path("/app/indextts2_checkpoints")
+        if src.exists() and any(src.iterdir()):
+            logger.info("Copying model from /app/indextts2_checkpoints...")
+            shutil.copytree(src, MODEL_DIR, dirs_exist_ok=True)
+            logger.info("✅ Model files copied from baked-in location")
+            return True
+    except Exception as e:
+        logger.error(f"❌ Failed to copy from /app: {e}")
+
+    logger.error("❌ Model files not available")
+    return False
+
+async def load_model():
+    """Try to load the IndexTTS model"""
+    global model
+    if model is not None:
+        return
+
+    try:
+        logger.info("Attempting to load IndexTTS model...")
+        model = IndexTTS(model_dir=str(MODEL_DIR), device=device)
+        logger.info("✅ Model loaded successfully!")
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}")
+        model = None
 
 if __name__ == "__main__":
     import uvicorn
