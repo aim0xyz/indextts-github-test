@@ -1,0 +1,13 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+torch
+torchaudio
+transformers
+huggingface-hub
+librosa
+soundfile
+numpy
+pyyaml
+accelerate
+modelscope
+git+https://github.com/index-tts/index-tts.git
