@@ -2,13 +2,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including CUDA support
 RUN apt-get update && apt-get install -y \
     libsndfile1-dev \
     ffmpeg \
     git \
     curl \
     wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install CUDA runtime for GPU support
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb \
+    && dpkg -i cuda-keyring_1.1-1_all.deb \
+    && apt-get update \
+    && apt-get install -y cuda-runtime-12-2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python requirements (including PyTorch)

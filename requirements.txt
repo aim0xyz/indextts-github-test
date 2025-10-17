@@ -1,8 +1,14 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-torch==2.9.0 --index-url https://download.pytorch.org/whl/cpu
-torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cpu
-torchvision==0.24.0 --index-url https://download.pytorch.org/whl/cpu
+# For CPU-only (comment these out if using GPU):
+# torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+# torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+# torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu
+
+# For GPU support (uncomment these and comment out CPU versions above if you have CUDA installed):
+torch==2.8.0 --index-url https://download.pytorch.org/whl/cu121
+torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu121
+torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu121
 transformers
 huggingface-hub
 librosa
