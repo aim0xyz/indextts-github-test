@@ -1,22 +1,25 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-# For CPU-only (comment these out if using GPU):
-# torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
-# torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
-# torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+python-multipart==0.0.9
 
-# For GPU support (uncomment these and comment out CPU versions above if you have CUDA installed):
-torch==2.8.0 --index-url https://download.pytorch.org/whl/cu121
-torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu121
-torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu121
-transformers
-huggingface-hub
-librosa
-soundfile
-numpy
-pyyaml
-accelerate
-modelscope
-pydantic
-python-multipart
-git+https://github.com/index-tts/index-tts.git@main
+# GPU PyTorch (CUDA 12.1 - matches RunPod; comment CPU below if needed)
+torch==2.4.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+torchaudio==2.4.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+# torchvision==0.19.1+cu121 --index-url https://download.pytorch.org/whl/cu121  # Optional, uncomment if needed
+
+# CPU fallback (comment out for GPU-only)
+# torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+# torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+
+# TTS/HF deps
+transformers==4.45.2
+huggingface-hub==0.25.2
+librosa==0.10.2
+soundfile==0.12.1
+numpy==2.1.1
+accelerate==1.1.1
+
+# Optional (remove if not used)
+# modelscope==1.18.0  # For ModelScope if extending
+# pyyaml==6.0.2

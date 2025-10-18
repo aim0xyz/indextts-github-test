@@ -33,9 +33,11 @@ CACHE_DIR.mkdir(exist_ok=True)
 
 # Bundled presets (minimal example - REPLACE with your full embeddings from presets.json)
 # Format: {"language": {"emotion": [embedding_list]}} - e.g., from your file
+# TODO: Paste real data here, e.g.:
+# PRESETS = json.loads('''{"en": {"neutral": [0.123, -0.456, ...], "happy": [...]}, ...}''')
 PRESETS = {
     "en": {
-        "neutral": [0.0] * 256,  # Placeholder: Replace with real 256-dim embedding
+        "neutral": [0.0] * 256,  # Placeholder: Replace with real 256-dim embedding from presets.json
         "happy": [0.1] * 256     # Add sad, angry, etc. for all emotions
     },
     "es": {
@@ -43,11 +45,13 @@ PRESETS = {
         "happy": [0.1] * 256
     }
     # TODO: Add fr, de, it, pt, ru, zh, ja, ko, ar, hi with their emotions/embeddings
-    # Load your presets.json: Parse and paste the dict here for static use
+    # For dynamic load: if Path("presets.json").exists(): PRESETS = json.load(open("presets.json"))
 }
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 logger.info(f"Using device: {device}")
+if device == "cuda":
+    torch.backends.cudnn.benchmark = True  # Perf boost on GPU
 if device == "cpu":
     logger.warning("CUDA not available - running on CPU. Performance will be significantly slower.")
 
@@ -91,17 +95,15 @@ async def startup():
         VOICE_DB_PATH.write_text(json.dumps(in_memory_db))
 
     # Try to ensure model is available
-    model_available = await ensure_model_available()
+    model_available = ensure_model_available()  # Made sync (no await needed)
     if not model_available:
         logger.warning("Model not available during startup - will load on-demand")
 
     # Try to load the model (don't fail if it doesn't work initially)
     try:
-        await load_model()
+        load_model()  # Made sync
     except Exception as e:
         logger.warning(f"Initial model load failed: {e}. Model will be loaded on-demand.")
-        # Don't raise an exception - let the API start without the model
-        # The /run endpoint will try to load it when needed
 
 @app.get("/health")
 async def health():
@@ -166,7 +168,7 @@ def get_embedding(user_id: str | None, preset: str | None, lang: str):
             audio, sr = librosa.load(voice_path, sr=22050)
             emb = model.clone_voice(audio, sr, lang).tolist()
             voice_data["embedding"] = emb
-            save_db(load_db())
+            save_db(load_db())  # Note: This saves the updated db
             return emb
     if preset:
         parts = preset.split("_")
@@ -212,10 +214,10 @@ async def run_job(request: RunPodRequest):
 
         # Handle voice cloning requests
         if "audio_data" in job_input and "voice_name" in job_input:
-            return await handle_voice_cloning(job_input)
+            return handle_voice_cloning(job_input)  # Made sync
         # Handle TTS requests
         elif "text" in job_input:
-            return await handle_tts_request(job_input)
+            return handle_tts_request(job_input)  # Made sync
         else:
             raise HTTPException(400, "Invalid job input format")
 
@@ -223,7 +225,7 @@ async def run_job(request: RunPodRequest):
         logger.error(f"Run job error: {e}")
         raise HTTPException(500, str(e))
 
-async def handle_voice_cloning(job_input: dict):
+def handle_voice_cloning(job_input: dict):  # Made sync (no async ops)
     """Handle voice cloning requests from /run endpoint"""
     try:
         # Extract parameters
@@ -247,7 +249,7 @@ async def handle_voice_cloning(job_input: dict):
 
         if model is None:
             # Try to load model if not already loaded
-            await load_model()
+            load_model()
 
         if model is None:
             raise HTTPException(503, "Model not available")
@@ -277,7 +279,7 @@ async def handle_voice_cloning(job_input: dict):
         logger.error(f"Voice cloning error: {e}")
         raise HTTPException(500, str(e))
 
-async def handle_tts_request(job_input: dict):
+def handle_tts_request(job_input: dict):  # Made sync
     """Handle TTS requests from /run endpoint"""
     try:
         # Extract parameters
@@ -292,7 +294,7 @@ async def handle_tts_request(job_input: dict):
 
         if model is None:
             # Try to load model if not already loaded
-            await load_model()
+            load_model()
 
         if model is None:
             raise HTTPException(503, "Model not available")
@@ -335,7 +337,7 @@ async def handle_tts_request(job_input: dict):
         logger.error(f"TTS request error: {e}")
         raise HTTPException(500, str(e))
 
-async def ensure_model_available():
+def ensure_model_available():  # Made sync
     """Ensure the IndexTTS model files are available"""
     global model
 
@@ -392,7 +394,7 @@ async def ensure_model_available():
     logger.error("❌ Model files not available")
     return False
 
-async def load_model():
+def load_model():  # Made sync
     """Try to load the IndexTTS model"""
     global model
     if model is not None:
