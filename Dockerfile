@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     libsndfile1-dev \
     ffmpeg \
-    && ln -s /usr/bin/python3.11 /usr/bin/python \
-    && ln -s /usr/bin/pip3 /usr/bin/pip \
+    && (ln -sf /usr/bin/python3.11 /usr/bin/python || true) \
+    && (ln -sf /usr/bin/pip3 /usr/bin/pip || true) \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
