@@ -10,16 +10,31 @@ import torch
 import soundfile as sf
 import librosa
 from pathlib import Path
-from index_tts import TTS as IndexTTS  # Assumes git install
-
-# New import for runtime HF download
-from huggingface_hub import snapshot_download
-import shutil
-
 # Logging
 import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Try to import IndexTTS - handle import errors gracefully
+try:
+    from index_tts import TTS as IndexTTS  # Assumes git install
+    INDEXTTS_AVAILABLE = True
+    logger.info("✅ IndexTTS imported successfully")
+except ImportError as e:
+    INDEXTTS_AVAILABLE = False
+    logger.error(f"❌ Failed to import IndexTTS: {e}")
+    logger.warning("IndexTTS not available - API will return service unavailable errors")
+    IndexTTS = None
+
+# New import for runtime HF download
+try:
+    from huggingface_hub import snapshot_download
+    import shutil
+    HF_AVAILABLE = True
+except ImportError:
+    HF_AVAILABLE = False
+    logger.warning("HuggingFace Hub not available - model download may fail")
+    snapshot_download = None
 
 # Ephemeral internal paths (/tmp - resets on cold starts, fine for testing)
 TEMP_DIR = Path("/tmp/indextts")
@@ -82,7 +97,9 @@ async def root():
         "device": device,
         "gpu_available": gpu_available,
         "gpu_count": torch.cuda.device_count() if gpu_available else 0,
-        "model_loaded": model is not None
+        "model_loaded": model is not None,
+        "indextts_available": INDEXTTS_AVAILABLE,
+        "huggingface_available": HF_AVAILABLE
     }
 
 @app.on_event("startup")
@@ -93,6 +110,10 @@ async def startup():
         in_memory_db = json.loads(VOICE_DB_PATH.read_text())
     else:
         VOICE_DB_PATH.write_text(json.dumps(in_memory_db))
+
+    if not INDEXTTS_AVAILABLE:
+        logger.error("IndexTTS not available - API endpoints will return service unavailable")
+        return
 
     # Try to ensure model is available
     model_available = ensure_model_available()  # Made sync (no await needed)
@@ -115,7 +136,10 @@ async def health():
         "gpu_available": gpu_available,
         "gpu_count": gpu_count,
         "storage": "ephemeral",
-        "model_loaded": model is not None
+        "model_loaded": model is not None,
+        "indextts_available": INDEXTTS_AVAILABLE,
+        "huggingface_available": HF_AVAILABLE,
+        "model_files_present": any(MODEL_DIR.iterdir()) if MODEL_DIR.exists() else False
     }
 
 def load_db():
@@ -131,6 +155,7 @@ def save_db(db):
 
 @app.post("/clone")
 async def clone(request: CloneRequest, file: UploadFile = File(...)):
+    if not INDEXTTS_AVAILABLE: raise HTTPException(503, "IndexTTS not available")
     if not model: raise HTTPException(503, "Model not ready")
     if not file.content_type.startswith("audio/"): raise HTTPException(400, "Audio required")
     try:
@@ -178,6 +203,7 @@ def get_embedding(user_id: str | None, preset: str | None, lang: str):
 
 @app.post("/tts")
 async def tts(request: TTSRequest):
+    if not INDEXTTS_AVAILABLE: raise HTTPException(503, "IndexTTS not available")
     if not model: raise HTTPException(503, "Model not ready")
     try:
         emb_list = get_embedding(request.user_id, request.preset, request.language)
@@ -341,6 +367,10 @@ def ensure_model_available():  # Made sync
     """Ensure the IndexTTS model files are available"""
     global model
 
+    if not INDEXTTS_AVAILABLE or not HF_AVAILABLE:
+        logger.warning("IndexTTS or HuggingFace Hub not available - cannot download model")
+        return False
+
     # Check if model directory has files
     if any(MODEL_DIR.iterdir()):
         logger.info("Model files already present in MODEL_DIR")
@@ -348,7 +378,7 @@ def ensure_model_available():  # Made sync
 
     # Try to download from HuggingFace
     hf_token = os.getenv("HF_TOKEN")
-    if hf_token:
+    if hf_token and snapshot_download:
         try:
             logger.info("Downloading IndexTTS model from HuggingFace...")
             ret_path = snapshot_download(
@@ -397,11 +427,15 @@ def ensure_model_available():  # Made sync
 def load_model():  # Made sync
     """Try to load the IndexTTS model"""
     global model
-    if model is not None:
+    if model is not None or not INDEXTTS_AVAILABLE:
         return
 
     try:
         logger.info("Attempting to load IndexTTS model...")
+        if IndexTTS is None:
+            logger.error("IndexTTS class not available")
+            return
+
         model = IndexTTS(model_dir=str(MODEL_DIR), device=device)
         logger.info("✅ Model loaded successfully!")
     except Exception as e:
