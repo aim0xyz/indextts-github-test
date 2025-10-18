@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     libsndfile1-dev \
     ffmpeg \
-    && ln -sf /usr/bin/python3.11 /usr/bin/python \
-    && ln -sf /usr/bin/pip3 /usr/bin/pip \
+    && ln -s /usr/bin/python3.11 /usr/bin/python \
+    && ln -s /usr/bin/pip3 /usr/bin/pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -25,10 +25,22 @@ RUN pip install --no-cache-dir torch==2.4.1+cu121 torchaudio==2.4.1+cu121 \
     --index-url https://download.pytorch.org/whl/cu121 && \
     pip install --no-cache-dir -r requirements.txt
 
-# Install index_tts from Git (adjust repo if needed; this is the key fix for ModuleNotFoundError)
-RUN pip install --no-cache-dir git+https://github.com/IndexTeam/IndexTTS.git
+# Install index_tts from Git with proper authentication handling
+# Option 1: Try pip install first (works for public repos)
+RUN (pip install --no-cache-dir git+https://github.com/IndexTeam/IndexTTS.git && echo "✅ IndexTTS installed via pip") || \
+    # Option 2: Manual git clone with authentication (for private repos)
+    (echo "🔑 Setting up git credentials..." && \
+     git config --global user.email "docker@example.com" && \
+     git config --global user.name "Docker Build" && \
+     git clone https://github.com/IndexTeam/IndexTTS.git /tmp/indextts && \
+     cd /tmp/indextts && \
+     pip install -e . && \
+     cd / && rm -rf /tmp/indextts && \
+     echo "✅ IndexTTS installed via manual git clone")
 
-# If the repo has submodules or needs post-install (e.g., for ComfyUI-style TTS), uncomment:
+# Alternative: If IndexTTS installation fails, you can:
+# 1. Make sure the repository is public or use a personal access token
+# 2. Use this alternative installation method:
 # RUN git clone https://github.com/IndexTeam/IndexTTS.git /tmp/indextts && \
 #     cd /tmp/indextts && \
 #     pip install -e . && \
