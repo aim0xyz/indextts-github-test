@@ -15,16 +15,55 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Try to import IndexTTS - handle import errors gracefully
-try:
-    from index_tts import TTS as IndexTTS  # Assumes git install
-    INDEXTTS_AVAILABLE = True
-    logger.info("✅ IndexTTS imported successfully")
-except ImportError as e:
-    INDEXTTS_AVAILABLE = False
-    logger.error(f"❌ Failed to import IndexTTS: {e}")
-    logger.warning("IndexTTS not available - API will return service unavailable errors")
-    IndexTTS = None
+# Try to import available TTS libraries - handle import errors gracefully
+
+# Available TTS backends (IndexTTS-2 is preferred)
+TTS_BACKENDS = [
+    ("index_tts", "IndexTTS-2 from Hugging Face"),
+    ("TTS", "Coqui TTS"),
+    ("tortoise", "Tortoise TTS"),
+    ("pyttsx3", "Simple offline TTS")
+]
+
+AVAILABLE_TTS = {}
+TTS_BACKEND = None
+
+# Try to import TTS libraries
+for backend_name, description in TTS_BACKENDS:
+    try:
+        if backend_name == "pyttsx3":
+            import pyttsx3
+            AVAILABLE_TTS[backend_name] = pyttsx3
+            TTS_BACKEND = backend_name
+            logger.info(f"✅ {description} imported successfully")
+            break
+        elif backend_name == "TTS":
+            import TTS
+            AVAILABLE_TTS[backend_name] = TTS
+            TTS_BACKEND = backend_name
+            logger.info(f"✅ {description} imported successfully")
+            break
+        elif backend_name == "tortoise":
+            from tortoise.api import TextToSpeech
+            AVAILABLE_TTS[backend_name] = TextToSpeech
+            TTS_BACKEND = backend_name
+            logger.info(f"✅ {description} imported successfully")
+            break
+        elif backend_name == "index_tts":
+            from index_tts import TTS as IndexTTS
+            AVAILABLE_TTS[backend_name] = IndexTTS
+            TTS_BACKEND = backend_name
+            logger.info(f"✅ {description} imported successfully")
+            break
+    except ImportError as e:
+        logger.warning(f"❌ {description} not available: {e}")
+        continue
+
+if not AVAILABLE_TTS:
+    logger.error("❌ No TTS backend available - API will return service unavailable errors")
+    TTS_BACKEND = None
+else:
+    logger.info(f"🎯 Using TTS backend: {TTS_BACKEND}")
 
 # New import for runtime HF download
 try:
@@ -72,6 +111,7 @@ if device == "cpu":
 
 # Globals
 model = None
+tts_engine = None
 in_memory_db = {"voices": {}}
 
 class CloneRequest(BaseModel):
@@ -425,21 +465,40 @@ def ensure_model_available():  # Made sync
     return False
 
 def load_model():  # Made sync
-    """Try to load the IndexTTS model"""
+    """Load the IndexTTS-2 model from Hugging Face"""
     global model
-    if model is not None or not INDEXTTS_AVAILABLE:
+
+    # Check if model is already loaded
+    if model is not None:
         return
 
     try:
-        logger.info("Attempting to load IndexTTS model...")
-        if IndexTTS is None:
-            logger.error("IndexTTS class not available")
-            return
+        logger.info("Loading IndexTTS-2 model from Hugging Face...")
 
+        # Import IndexTTS
+        from index_tts import TTS as IndexTTS
+
+        # Download model from Hugging Face if not present
+        if not any(MODEL_DIR.iterdir()):
+            logger.info("Downloading IndexTTS-2 model from Hugging Face Hub...")
+            if HF_AVAILABLE and snapshot_download is not None:
+                snapshot_download(
+                    repo_id="IndexTeam/IndexTTS-2",
+                    local_dir=str(MODEL_DIR),
+                    local_dir_use_symlinks=False
+                )
+                logger.info("✅ Model downloaded successfully")
+            else:
+                logger.error("HuggingFace Hub not available for model download")
+                return
+
+        # Load the model
         model = IndexTTS(model_dir=str(MODEL_DIR), device=device)
-        logger.info("✅ Model loaded successfully!")
+        logger.info("✅ IndexTTS-2 model loaded successfully!")
+
     except Exception as e:
-        logger.error(f"Failed to load model: {e}")
+        logger.error(f"Failed to load IndexTTS-2 model: {e}")
+        logger.error("Make sure you have HF_TOKEN set for Hugging Face access")
         model = None
 
 if __name__ == "__main__":

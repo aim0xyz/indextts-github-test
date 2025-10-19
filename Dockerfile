@@ -1,6 +1,10 @@
 # Use official NVIDIA CUDA runtime base for GPU support (Ubuntu 22.04, CUDA 12.2 - matches RunPod)
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
 
+# Build arguments for authentication
+ARG GITHUB_TOKEN
+ENV GITHUB_TOKEN=${GITHUB_TOKEN}
+
 # Install Python 3.11 and essentials
 RUN apt-get update && apt-get install -y \
     python3.11 \
@@ -25,22 +29,19 @@ RUN pip install --no-cache-dir torch==2.4.1+cu121 torchaudio==2.4.1+cu121 \
     --index-url https://download.pytorch.org/whl/cu121 && \
     pip install --no-cache-dir -r requirements.txt
 
-# Install index_tts from Git with proper authentication handling
-# Option 1: Try pip install first (works for public repos)
-RUN (pip install --no-cache-dir git+https://github.com/IndexTeam/IndexTTS.git && echo "✅ IndexTTS installed via pip") || \
-    # Option 2: Manual git clone with authentication (for private repos)
-    (echo "🔑 Setting up git credentials..." && \
-     git config --global user.email "docker@example.com" && \
-     git config --global user.name "Docker Build" && \
-     git clone https://github.com/IndexTeam/IndexTTS.git /tmp/indextts && \
-     cd /tmp/indextts && \
-     pip install -e . && \
-     cd / && rm -rf /tmp/indextts && \
-     echo "✅ IndexTTS installed via manual git clone")
+# Install IndexTTS-2 and dependencies
+RUN pip install --no-cache-dir git+https://github.com/IndexTeam/IndexTTS.git && echo "✅ IndexTTS installed"
 
-# Alternative: If IndexTTS installation fails, you can:
-# 1. Make sure the repository is public or use a personal access token
-# 2. Use this alternative installation method:
+# Create directories for model storage
+RUN mkdir -p /tmp/indextts/{indextts2_checkpoints,voices,cache} && \
+    chmod 755 /tmp/indextts /tmp/indextts/*
+
+# Set environment variables for Hugging Face
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+ENV HF_TOKEN=${HF_TOKEN}
+
+# Alternative installation methods (commented out - use the options above instead)
+# If you need IndexTTS specifically, you can uncomment and modify:
 # RUN git clone https://github.com/IndexTeam/IndexTTS.git /tmp/indextts && \
 #     cd /tmp/indextts && \
 #     pip install -e . && \

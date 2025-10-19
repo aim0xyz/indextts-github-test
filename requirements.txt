@@ -6,20 +6,22 @@ python-multipart==0.0.9
 # GPU PyTorch (CUDA 12.1 - matches RunPod; comment CPU below if needed)
 torch==2.4.1+cu121 --index-url https://download.pytorch.org/whl/cu121
 torchaudio==2.4.1+cu121 --index-url https://download.pytorch.org/whl/cu121
-# torchvision==0.19.1+cu121 --index-url https://download.pytorch.org/whl/cu121  # Optional, uncomment if needed
 
 # CPU fallback (comment out for GPU-only)
 # torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
 # torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cpu
 
-# TTS/HF deps
-transformers==4.45.2
-huggingface-hub==0.25.2
+# Basic TTS dependencies (add your preferred TTS library)
 librosa==0.10.2
 soundfile==0.12.1
 numpy==2.1.1
-accelerate==1.1.1
 
-# Optional (remove if not used)
-# modelscope==1.18.0  # For ModelScope if extending
-# pyyaml==6.0.2
+# Uncomment one of these based on your TTS choice:
+# tortoise-tts  # High quality but slower
+# TTS          # Coqui TTS - good balance
+# pyttsx3      # Simple offline TTS
+
+# Required: For IndexTTS-2 model downloads
+huggingface-hub==0.25.2   # For model downloads from Hugging Face
+transformers==4.45.2      # For HuggingFace models
+accelerate==1.1.1         # For faster inference
